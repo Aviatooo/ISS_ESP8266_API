@@ -1,0 +1,106 @@
+//Libraries
+#include <ArduinoJson.h>
+#include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>               //Setting Up the pin of our LED
+
+//Wifi setup values
+int ledState = HIGH;                         // Note that this switches the LED *off*
+const char* ssid = "SSID";                   //SSID of the wifi we want to connect to
+const char* password = "PASSWORD";           //Password of the wifi we want to connect to
+int localizer = 0;                           //Setting the variable that tells us if the ISS is over our wanted location
+float tgt_lon_str = 15;                      //Longtitude starting point of our target location
+float tgt_lon_stp = 30;                      //Longtitude stop point of our target location
+float tgt_lat_str = 30;                      //Latitude starting point of our target location
+float tgt_lat_stp = 45;                      //Latitude stop point of our target location
+ 
+void setup () {
+  
+  pinMode(LED_BUILTIN, OUTPUT);  
+  String wifi_message = "Wifi Succesfully Connected to ";   //Create message for our serial monitor
+  String successful_connection = wifi_message + ssid;       //Create message for our serial monitor
+  
+  Serial.begin(115200); 
+  WiFi.begin(ssid, password);                               //Attempt to connect to WiFi  
+  Serial.println("Connecting to agginged WiFi");            //Create message for our serial monitor
+  
+  while (WiFi.status() != WL_CONNECTED) {    
+    delay(500);
+    Serial.print(".");
+   }
+   
+    Serial.println(" ");
+    Serial.println(successful_connection);
+    Serial.println("Entering loop in 5 seconds"); 
+    delay(5000);   
+    Serial.println("--------------------------");
+    ledState = HIGH;                                        //Makes sure our LED stays off during setup
+}
+ 
+void loop() {
+    if (WiFi.status() == WL_CONNECTED) 
+      { 
+        WiFiClient client;                                 //Check WiFi connection status
+        HTTPClient http;                                   //Declare an object of class HTTPClient
+  
+        http.begin(client, "http://api.open-notify.org/iss-now.json");  //Specify request destination
+        int httpCode = http.GET();                                      //Send the request
+ 
+        if (httpCode > 0) 
+          { //Check the returning code
+            //Serial.println("\nStatusCode : " + String(httpCode));
+            String payload = http.getString();   //Get the request response payload
+            StaticJsonDocument<192> doc;
+            DeserializationError error = deserializeJson(doc, payload);
+            if (error) 
+             {
+               Serial.print(F("deserializeJson() failed: "));
+                Serial.println(error.f_str());
+               return;
+             }
+
+
+            const char* iss_position_longitude = doc["iss_position"]["longitude"]; 
+            const char* iss_position_latitude = doc["iss_position"]["latitude"]; 
+            long timestamp = doc["timestamp"]; // 1636375815
+            const char* message = doc["message"]; // "success"  
+            
+            String longitude = iss_position_longitude;
+            String latitude = iss_position_latitude;            
+
+            float correctedLongitude = longitude.toFloat();
+            float correctedLatitude = latitude.toFloat();
+            
+            Serial.println("Longitude: " + longitude);
+            Serial.println("Latitude: " + latitude);
+            
+
+            if(correctedLatitude < tgt_lat_stp && correctedLatitude > tgt_lat_str && correctedLongitude > tgt_lon_str && correctedLongitude < tgt_lon_stp){
+                for(int i =0; i <= 60; i++){     //Blynk for 30seconds after locating ISS over target area.
+                  ledState = LOW;  
+                  delay(250);                   //with 2 delays of 0.25 seconds * 60 reps gives 30 seconds between API calls 
+                  ledState = HIGH;
+                  delay(250);                                     
+                }
+                localizer = 1;               
+            }
+            else{
+              localizer = 0;
+            } 
+             http.end();   //Close connection 
+          }
+             
+       if(localizer == 0){     //While ISS is not over the target location we increase the time between API calls to avoid spamming the server.    
+         Serial.println("60 Seconds Until Next GET call");
+         delay(30000);    //Send a request every 30 seconds 
+         Serial.println("30 Seconds Until Next GET call");
+         delay(30000);    //Send a request every 30 seconds
+         Serial.println("----------------------------------------------------------------");
+       }
+       else{
+         delay(1000);     //When ISS is located above target area we reduce the time we scan its location for more accuracy 
+       }
+
+
+        
+  }
+}

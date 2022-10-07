@@ -1,107 +1,116 @@
-//Libraries
-#include <ArduinoJson.h>
+#include "SD.h"
+#if defined(ESP32)
+#include <WiFi.h>
+#include <FirebaseESP32.h>
+#elif defined(ESP8266)
 #include <ESP8266WiFi.h>
-#include <ESP8266HTTPClient.h>               //Setting Up the pin of our LED
+#include <FirebaseESP8266.h>
+#endif
 
-//Wifi setup values
+#include <iostream>
+#include <string>
+#include <addons/TokenHelper.h>
+#include <addons/RTDBHelper.h>
+#define WIFI_SSID "JS_Net"
+#define WIFI_PASSWORD "D72484VCX6"
+#define API_KEY "AIzaSyAup1h-Dp09xwX5yrGqyyrMmgR82FuFWaM"
+#define DATABASE_URL "smarthomeapp-f1d86-default-rtdb.europe-west1.firebasedatabase.app/"
+//#define USER_EMAIL "astathoulopoulos@gmail.com"
+//#define USER_EMAIL "admin@admin.com"
+//#define USER_PASSWORD "01121996"
+#define USER_EMAIL "esp@esp32.ide"
+#define USER_PASSWORD "123456"
 
-const char* ssid = "SSID";                   //SSID of the wifi we want to connect to
-const char* password = "PASSWORD";           //Password of the wifi we want to connect to
-int localizer = 0;                           //Setting the variable that tells us if the ISS is over our wanted location
-float tgt_lon_str = -60;                      //Longtitude starting point of our target location
-float tgt_lon_stp = -30;                      //Longtitude stop point of our target location
-float tgt_lat_str = 30;                      //Latitude starting point of our target location
-float tgt_lat_stp = 60;                      //Latitude stop point of our target location
- 
-void setup () {
+
+#include <NTPClient.h>
+#include <WiFiUdp.h>
+
+FirebaseData fbdo;
+FirebaseAuth auth;
+FirebaseConfig config;
+
+unsigned long sendDataPrevMillis = 0;
+unsigned long count = 0;
+
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org");
+
+void setup() 
+{
+  Serial.begin(115200);
   
-  pinMode(LED_BUILTIN, OUTPUT);  
-  String wifi_message = "Wifi Succesfully Connected to ";   //Create message for our serial monitor
-  String successful_connection = wifi_message + ssid;       //Create message for our serial monitor
-  
-  Serial.begin(115200); 
-  WiFi.begin(ssid, password);                               //Attempt to connect to WiFi  
-  Serial.println("Connecting to agginged WiFi");            //Create message for our serial monitor
-  
-  while (WiFi.status() != WL_CONNECTED) {    
-    delay(500);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.print("Connecting to Wi-Fi");
+  while (WiFi.status() != WL_CONNECTED) {
     Serial.print(".");
-   }
-   
-    Serial.println(" ");
-    Serial.println(successful_connection);
-    Serial.println("Entering loop in 5 seconds"); 
-    delay(5000);   
-    Serial.println("--------------------------");
-    digitalWrite(LED_BUILTIN, HIGH);                                       //Makes sure our LED stays off during setup
+    delay(300);
+  }
+  Serial.println();
+  Serial.print("Connected with IP: ");
+  Serial.println(WiFi.localIP());
+  Serial.println();
+
+  Serial.printf("Firebase Client v%s\n\n", FIREBASE_CLIENT_VERSION);
+
+  config.api_key = API_KEY;
+  auth.user.email = USER_EMAIL;
+  auth.user.password = USER_PASSWORD;
+  config.database_url = DATABASE_URL;
+  config.token_status_callback = tokenStatusCallback;  // see addons/TokenHelper.h
+
+  Firebase.begin(&config, &auth);
+  Firebase.reconnectWiFi(true);
+  Firebase.setDoubleDigits(5);
+
+  timeClient.begin();
+  timeClient.setTimeOffset(10800);
+
+  delay(2000);
 }
- 
+
 void loop() {
-    if (WiFi.status() == WL_CONNECTED) 
-      { 
-        WiFiClient client;                                 //Check WiFi connection status
-        HTTPClient http;                                   //Declare an object of class HTTPClient
-  
-        http.begin(client, "http://api.open-notify.org/iss-now.json");  //Specify request destination
-        int httpCode = http.GET();                                      //Send the request
- 
-        if (httpCode > 0) 
-          { //Check the returning code
-            //Serial.println("\nStatusCode : " + String(httpCode));
-            String payload = http.getString();   //Get the request response payload
-            StaticJsonDocument<192> doc;
-            DeserializationError error = deserializeJson(doc, payload);
-            if (error) 
-             {
-               Serial.print(F("deserializeJson() failed: "));
-                Serial.println(error.f_str());
-               return;
-             }
 
+  Serial_Printf("Entering Master Loop");
+  String HomeVironasRearBalconyTemperature = "36";
+  String HomeVironasRearBalconyHumidity =  "100";
 
-            const char* iss_position_longitude = doc["iss_position"]["longitude"]; 
-            const char* iss_position_latitude = doc["iss_position"]["latitude"]; 
-            long timestamp = doc["timestamp"]; // 1636375815
-            const char* message = doc["message"]; // "success"  
-            
-            String longitude = iss_position_longitude;
-            String latitude = iss_position_latitude;            
+  //get Time
+    timeClient.update();
+    time_t epochTime = timeClient.getEpochTime();
+    String formattedTime = timeClient.getFormattedTime();
+    struct tm *ptm = gmtime((time_t *)&epochTime);
+    String currentDate = String(ptm->tm_mday) + "-" + String(ptm->tm_mon + 1) + "-" + String(ptm->tm_year + 1900);
+  //get Time 
 
-            float correctedLongitude = longitude.toFloat();
-            float correctedLatitude = latitude.toFloat();
-            
-            Serial.println("Longitude: " + longitude);
-            Serial.println("Latitude: " + latitude);
-            
+  Serial.println("");
 
-            if(correctedLatitude < tgt_lat_stp && correctedLatitude > tgt_lat_str && correctedLongitude > tgt_lon_str && correctedLongitude < tgt_lon_stp)
-               {
-                for(int i =0; i <= 60; i++){     //Blynk for 30seconds after locating ISS over target area.
-                  digitalWrite(LED_BUILTIN, LOW);  
-                  delay(250);                   //with 2 delays of 0.25 seconds * 60 reps gives 30 seconds between API calls 
-                  digitalWrite(LED_BUILTIN, HIGH);
-                  delay(250);                                     
-                }
-                localizer = 1;               
-            }
-            else{
-              localizer = 0;
-            } 
-             http.end();   //Close connection 
-          }
-             
-       if(localizer == 0){     //While ISS is not over the target location we increase the time between API calls to avoid spamming the server.    
-         Serial.println("60 Seconds Until Next GET call");
-         delay(30000);    //Send a request every 30 seconds 
-         Serial.println("30 Seconds Until Next GET call");
-         delay(30000);    //Send a request every 30 seconds
-         Serial.println("----------------------------------------------------------------");
-       }
-       else{
-         delay(1000);     //When ISS is located above target area we reduce the time we scan its location for more accuracy 
-       }
+  if (Firebase.ready() && (millis() - sendDataPrevMillis > 15000 || sendDataPrevMillis == 0)) 
+  { 
+    Serial_Printf("Firebase Ready, Sending Data\n");
 
+    //Get refresh time from firebase ------------------------------------------------------------------------------------------------------------------------------------
+      Firebase.getInt(fbdo, F("/Settings/RefreshTime")) ? String(fbdo.to<int>()).c_str() : fbdo.errorReason().c_str();
+      int refreshTime = 0;
+      Firebase.getInt(fbdo, F("/Settings/RefreshTime"), &refreshTime) ? String(refreshTime).c_str() : fbdo.errorReason().c_str();
+    //Get refresh time from firebase ------------------------------------------------------------------------------------------------------------------------------------
 
-        
+    //Get measurement time from firebase ------------------------------------------------------------------------------------------------------------------------------------
+      Firebase.getInt(fbdo, F("/Settings/MeasurementTime")) ? String(fbdo.to<int>()).c_str() : fbdo.errorReason().c_str();
+      int measurementTime = 0;
+      Firebase.getInt(fbdo, F("/Settings/MeasurementTime"), &measurementTime) ? String(measurementTime).c_str() : fbdo.errorReason().c_str();
+      Serial_Printf("measure rate = %d\n", measurementTime);
+    //Get measurement time from firebase ------------------------------------------------------------------------------------------------------------------------------------
+
+    sendDataPrevMillis = millis();    
+    Firebase.setString(fbdo, F("Modules/HomeVironasRearBalcony/Date"), currentDate) ? "ok" : fbdo.errorReason().c_str();
+    Firebase.setString(fbdo, F("Modules/HomeVironasRearBalcony/Time"), formattedTime) ? "ok" : fbdo.errorReason().c_str();
+    Firebase.setString(fbdo, F("Modules/HomeVironasRearBalcony/Temperature"), HomeVironasRearBalconyTemperature) ? "ok" : fbdo.errorReason().c_str();
+    Firebase.setString(fbdo, F("Modules/HomeVironasRearBalcony/Humidity"), HomeVironasRearBalconyHumidity) ? "ok" : fbdo.errorReason().c_str();
+    
+    Serial_Printf("Data Sent, delay %dsecs\n", refreshTime);    
+    delay(refreshTime*1000);
+  }else{
+    Serial_Printf("Firebase Not Ready, delay 30secs\n");
+    delay(30000);
   }
 }
